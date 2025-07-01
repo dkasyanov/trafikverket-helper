@@ -115,7 +115,7 @@ def load_config() -> dict:
     Returns:
         A dictionary containing the configuration data.
     """
-    return safe_json_load(paths.config_file, default_value={})
+    return safe_json_load(str(paths.config_file), default_value={})
 
 
 def update_config(data: dict) -> None:
@@ -134,7 +134,7 @@ def update_config(data: dict) -> None:
     data = json.dumps(config, indent=4)
 
     # Write the updated configuration to the file
-    safe_write(data, paths.config_file)
+    safe_write(data, str(paths.config_file))
 
 
 def load_location_ids() -> dict:
@@ -143,4 +143,4 @@ def load_location_ids() -> dict:
     Returns:
         dict: A dictionary containing the valid location IDs for each examination type.
     """
-    return safe_json_load(paths.valid_locations_path, default_value={})
+    return safe_json_load(str(paths.valid_locations_path), default_value={})

@@ -1,4 +1,3 @@
-# Import the Path class from the pathlib module
 from pathlib import Path
 
 working_directory = Path.cwd()

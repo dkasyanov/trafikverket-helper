@@ -16,3 +16,24 @@ class HTTPStatus(Exception):
     def __str__(self):
         """Return a string representation of the HTTPStatus exception."""
         return f"Unexpected status code from server: {self.status_code}"
+
+
+class SessionExpiredError(Exception):
+    """Exception raised when the session has expired and cannot be refreshed.
+
+    This exception is raised when the API session has expired and the
+    automatic refresh mechanism was unable to restore the session.
+    """
+
+    def __init__(self, message="Session has expired and could not be refreshed"):
+        """Initialize the SessionExpiredError exception.
+
+        Args:
+            message: A custom error message.
+        """
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        """Return a string representation of the SessionExpiredError exception."""
+        return self.message

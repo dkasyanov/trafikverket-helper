@@ -61,26 +61,3 @@ def hide_print(terminal_width: int = None) -> None:
     print(" " * terminal_width, end="\r", flush=True)
 
 
-def create_requests_proxy(host: str, port: str, protocol: str = 'http') -> dict:
-    """Create a proxy configuration for the requests library.
-
-    This function creates a dictionary with proxy configuration
-    settings that can be used with the requests library. The
-    dictionary contains proxy settings for both HTTP and HTTPS
-    requests.
-
-    Args:
-        host: The hostname or IP address of the proxy server.
-        port: The port number of the proxy server.
-        protocol: The protocol to use for the proxy server.
-            This should be either "http" or "https". The default
-            value is "http".
-
-    Returns:
-        A dictionary with proxy configuration settings for the
-        requests library.
-    """
-    return {
-        "http": f'{protocol}://{host}:{port}',
-        "https": f'{protocol}://{host}:{port}'
-    }

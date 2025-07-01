@@ -1,5 +1,6 @@
 import requests
 from api import exceptions
+from api.session_manager import get_session_manager
 
 
 class TrafikverketAPI:
@@ -10,16 +11,14 @@ class TrafikverketAPI:
     appointments.
 
     Attributes:
-        proxy: A dictionary containing the proxy settings for the session.
         session: A `requests.Session` object for making API calls.
         default_params: A dictionary containing the default parameters for the API calls.
+        session_manager: Session manager for handling cookie refresh.
 
     """
 
     def __init__(
         self,
-        cookies,
-        proxy: dict,
         useragent: str,
         ssn: str,
         licence_id: int = 5,
@@ -43,8 +42,6 @@ class TrafikverketAPI:
         Initialize a TrafikverketAPI object.
 
         Args:
-            cookies: A dictionary containing the cookies for the session.
-            proxy: A dictionary containing the proxy settings for the session.
             useragent: A string containing the user agent for the session.
             SSN: A string containing the user's SSN.
             licence_ID: An integer specifying the user's licence ID. Defaults to 5.
@@ -65,11 +62,11 @@ class TrafikverketAPI:
             occasion_choice_id: An integer specifying the occasion choice ID. Defaults to 1.
         """
 
-        # Set the proxy settings
-        self.proxy = proxy
-
         # Create a new session
         self.session = requests.session()
+
+        # Initialize session manager
+        self.session_manager = get_session_manager()
 
         # Set the default parameters for the API calls
         self.default_params = {
@@ -99,8 +96,9 @@ class TrafikverketAPI:
             }
         }
 
-        # Add the cookies to the session's cookiejar
-        requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
+        # Add the cookies to the session's cookiejar (use session manager cookies)
+        session_cookies = self.session_manager.get_current_cookies()
+        requests.utils.add_dict_to_cookiejar(self.session.cookies, session_cookies)
 
         # Set the headers for the session
         self.session.headers = {
@@ -112,15 +110,54 @@ class TrafikverketAPI:
             'User-Agent': useragent,
             'Content-Type': 'application/json',
             'Origin': 'https://fp.trafikverket.se',
+            'Sec-GPC': '1',
             'Sec-Fetch-Site': 'same-origin',
             'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Dest': 'empty',
             'Referer': 'https://fp.trafikverket.se/Boka/',
             'Accept-Encoding': 'gzip, deflate',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Priority': 'u=0',
         }
 
-    def get_available_dates(self, location_id: int, extended_information: bool = False) -> list[dict] | list[str]:
+    def _update_session_cookies(self):
+        """Update session cookies from the session manager."""
+        current_cookies = self.session_manager.get_current_cookies()
+        # Clear existing cookies and add current ones
+        self.session.cookies.clear()
+        requests.utils.add_dict_to_cookiejar(self.session.cookies, current_cookies)
+
+    def _ensure_fresh_session(self):
+        """Ensure the session has fresh cookies before making API calls."""
+        # Try to refresh cookies if needed
+        if not self.session_manager.ensure_fresh_cookies():
+            print("Warning: Failed to refresh cookies automatically")
+        
+        # Update session cookies with any new ones
+        self._update_session_cookies()
+
+    def _handle_session_error(self, response_text: str) -> bool:
+        """
+        Handle session-related errors and attempt to refresh if needed.
+        
+        Args:
+            response_text: The response text to check for errors
+            
+        Returns:
+            True if session was refreshed, False otherwise
+        """
+        if self.session_manager.is_session_expired(response_text):
+            print("Session expired detected. Attempting to refresh...")
+            # Try to refresh cookies proactively
+            if self.session_manager.refresh_cookies_proactively():
+                self._update_session_cookies()
+                return True
+            else:
+                print("Failed to refresh cookies proactively")
+                return False
+        return False
+
+    def get_available_dates(self, location_id: int, extended_information: bool = False):
         """
         Retrieve a list of available dates for the given location.
 
@@ -137,33 +174,119 @@ class TrafikverketAPI:
 
         Raises:
             HTTPStatus: If the server returns an unexpected response code.
+            SessionExpiredError: If the session has expired and cannot be refreshed.
         """
         # Update location ID from default params
         params = self.default_params
         params['occasionBundleQuery']['locationId'] = location_id
+        params['occasionBundleQuery']['languageId'] = 4
+
+        # Ensure we have current cookies
+        self._ensure_fresh_session()
 
         # Send request to server
         r = self.session.post(
             url='https://fp.trafikverket.se/Boka/occasion-bundles',
             json=params,
             verify=False,
-            proxies=self.proxy,
             timeout=60
         )
 
-        # Handle response
-        if r.status_code == 200 and (response_data := r.json())['status'] == 200:
-            # Extract data from response
-            available_rides = response_data['data']['bundles']
-            dates_found = [
-                ride['occasions'][0]['date'] for ride in available_rides
-            ]
+        response_text = r.text
+        print(response_text)
 
-            # Return the dates found or the full list of available rides,
-            # depending on the value of the extended_information flag.
-            if extended_information:
-                return available_rides
-            else:
-                return dates_found
+        # Check for session errors and handle them
+        if self._handle_session_error(response_text):
+            # Retry the request once with fresh cookies
+            r = self.session.post(
+                url='https://fp.trafikverket.se/Boka/occasion-bundles',
+                json=params,
+                verify=False,
+                timeout=60
+            )
+            response_text = r.text
+            print(f"Retry response: {response_text}")
+
+        # Handle response
+        if r.status_code == 200:
+            # self.session_manager.update_cookies_from_response(r.headers)
+            try:
+                response_data = r.json()
+                if response_data['status'] == 200:
+                    # Extract data from response
+                    available_rides = response_data['data']['bundles']
+                    dates_found = [
+                        ride['occasions'][0]['date'] for ride in available_rides
+                    ]
+
+                    # Return the dates found or the full list of available rides,
+                    # depending on the value of the extended_information flag.
+                    if extended_information:
+                        return available_rides
+                    else:
+                        return dates_found
+                else:
+                    # Check if this is a session-related error
+                    if self._handle_session_error(response_text):
+                        raise exceptions.SessionExpiredError("Session expired and could not be refreshed")
+                    else:
+                        raise exceptions.HTTPStatus(r.status_code)
+            except ValueError:
+                # Invalid JSON response
+                if self._handle_session_error(response_text):
+                    raise exceptions.SessionExpiredError("Session expired and could not be refreshed")
+                else:
+                    raise exceptions.HTTPStatus(r.status_code)
         else:
             raise exceptions.HTTPStatus(r.status_code)
+
+    def get_session_info(self):
+        """
+        Get information about the current session.
+        
+        Returns:
+            Dictionary with session information
+        """
+        return self.session_manager.get_session_info()
+
+    def refresh_cookies_from_request(self, request_text: str) -> bool:
+        """
+        Refresh cookies from HTTP request text.
+        
+        Args:
+            request_text: Raw HTTP request text
+            
+        Returns:
+            True if cookies were updated, False otherwise
+        """
+        success = self.session_manager.update_cookies_from_request(request_text)
+        if success:
+            self._update_session_cookies()
+        return success
+
+    def refresh_cookies_from_response(self, response_text: str) -> bool:
+        """
+        Refresh cookies from HTTP response text.
+        
+        Args:
+            response_text: Raw HTTP response text
+            
+        Returns:
+            True if cookies were updated, False otherwise
+        """
+        success = self.session_manager.update_cookies_from_response(response_text)
+        if success:
+            self._update_session_cookies()
+        return success
+
+    def refresh_cookies_proactively(self) -> bool:
+        """
+        Manually trigger proactive cookie refresh.
+        
+        Returns:
+            True if cookies were successfully refreshed, False otherwise
+        """
+        success = self.session_manager.refresh_cookies_proactively()
+        if success:
+            self._update_session_cookies()
+        return success

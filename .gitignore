@@ -213,4 +213,10 @@ $RECYCLE.BIN/
 # Logging directory
 /log
 
+# Config
+.config.json
+
+# Database
+*.db
+
 # End of https://www.toptal.com/developers/gitignore/api/windows,visualstudiocode,python,jupyternotebooks,git
